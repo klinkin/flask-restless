@@ -54,6 +54,8 @@ from .helpers import strings_to_dates
 from .helpers import to_dict
 from .helpers import unicode_keys_to_strings
 from .helpers import upper_keys
+from werkzeug.exceptions import BadRequest
+
 from .search import create_query
 from .search import search
 
@@ -186,6 +188,22 @@ def _parse_excludes(column_names):
     return columns, relations
 
 
+def require_json_content_type(func):
+    """Decorator function which checks that all requests must be have
+    ``Content-Type: application/json``.
+
+    Requests that do not have the ``Content-Type: application/json`` header
+    result in a :http:statuscode:`400` response.
+
+    """
+    def check_content_type(*args, **kw):
+        if request.headers['Content-Type'] != 'application/json':
+            message = 'Content-Type header must be application/json.'
+            return jsonify_status_code(400, message=message)
+        return func(*args, **kw)
+    return check_content_type
+
+
 class ModelView(MethodView):
     """Base class for :class:`flask.MethodView` classes which represent a view
     of a SQLAlchemy model.
@@ -201,6 +219,10 @@ class ModelView(MethodView):
     query object, depending on how the model has been defined.
 
     """
+
+    #: Applies the :func:`require_json_content_type` decorator to each of the
+    #: view functions in this class.
+    decorators = [require_json_content_type]
 
     def __init__(self, session, model, *args, **kw):
         """Calls the constructor of the superclass and specifies the model for
@@ -243,13 +265,20 @@ class FunctionAPI(ModelView):
         :ref:`functionevaluation`.
 
         """
+        if 'q' not in request.args or not request.args.get('q'):
+            return jsonify_status_code(400, message='Empty query parameter')
+        # if parsing JSON fails, return a 400 error in JSON format
         try:
-            data = json.loads(request.args.get('q')) or {}
+            data = json.loads(request.args.get('q', '{}'))
         except (TypeError, ValueError, OverflowError):
             return jsonify_status_code(400, message='Unable to decode data')
+        # if there is no 'functions' mapping, return the empty JSON object
+        if 'functions' not in data:
+            return jsonify_status_code(204)
+        # try to evaluate the functions
         try:
             result = evaluate_functions(self.session, self.model,
-                                        data.get('functions'))
+                                        data.get('functions', []))
             if not result:
                 return jsonify_status_code(204)
             return jsonpify(result)
@@ -270,7 +299,7 @@ class API(ModelView):
     """
 
     #: List of decorators applied to every method of this class.
-    decorators = [catch_processing_exceptions]
+    decorators = ModelView.decorators + [catch_processing_exceptions]
 
     def __init__(self, session, model, exclude_columns=None,
                  include_columns=None, validation_exceptions=None,
@@ -907,8 +936,8 @@ class API(ModelView):
         """
         # try to read the parameters for the model from the body of the request
         try:
-            params = json.loads(request.data)
-        except (TypeError, ValueError, OverflowError):
+            params = request.json or {}
+        except BadRequest:
             return jsonify_status_code(400, message='Unable to decode data')
 
         # apply any preprocessors to the POST arguments
@@ -994,11 +1023,14 @@ class API(ModelView):
         """
         # try to load the fields/values to update from the body of the request
         try:
-            data = json.loads(request.data)
-        except (TypeError, ValueError, OverflowError):
-            # this also happens when request.data is empty
+            data = request.json or {}
+        except BadRequest:
             return jsonify_status_code(400, message='Unable to decode data')
-        # Check if the request is to patch many instances of the current model.
+
+        # If there is no data to update, just return HTTP 204 No Content.
+        if len(data) == 0:
+            return jsonify_status_code(204)
+
         patchmany = instid is None
         # Perform any necessary preprocessing.
         if patchmany:
