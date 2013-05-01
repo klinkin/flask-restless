@@ -12,6 +12,7 @@ from __future__ import with_statement
 
 from datetime import date
 from datetime import datetime
+import uuid
 
 from sqlalchemy.exc import OperationalError
 from unittest2 import TestCase
@@ -88,6 +89,15 @@ class ModelHelpersTest(TestSupport):
         d = to_dict(computer)
         self.assertIn('buy_date', d)
         self.assertEqual(d['buy_date'], computer.buy_date.isoformat())
+
+    def test_uuid(self):
+        """Tests for correct serialization of UUID objects."""
+        exampleuuid = uuid.uuid1()
+        vehicle = self.Vehicle(uuid=exampleuuid)
+        self.session.commit()
+        d = to_dict(vehicle)
+        self.assertIn('uuid', d)
+        self.assertEqual(str(exampleuuid), d['uuid'])
 
     def test_to_dict(self):
         """Test for serializing attributes of an instance of the model by the
