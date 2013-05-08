@@ -15,6 +15,10 @@ Version 0.10.2-dev
 
 Not yet released.
 
+- Requests that require a body but don't have ``Content-Type:
+  application/json`` will cause a :http:statuscode:`415` response.
+- Responses now have ``Content-Type: application/json``.
+
 Version 0.10.1
 --------------
 
